@@ -17,7 +17,7 @@ import sys
 try:
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError, URLError
-except ImportError:  # Python 2 compatibility for older Maya installs.
+except ImportError:
     from urllib2 import Request, urlopen, HTTPError, URLError
 
 
@@ -35,7 +35,6 @@ def _request_json(path, payload=None, token=None, timeout=10):
         headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = "Bearer " + token
-
     request = Request(url, data=body, headers=headers)
     try:
         response = urlopen(request, timeout=timeout)
@@ -45,7 +44,6 @@ def _request_json(path, payload=None, token=None, timeout=10):
         raise RuntimeError("Server returned HTTP {}: {}".format(exc.code, detail))
     except URLError as exc:
         raise RuntimeError("Cannot connect to 3DVPSserver: {}".format(exc))
-
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     return json.loads(raw) if raw else {}
@@ -78,6 +76,14 @@ def _ensure_path(path):
         sys.path.insert(0, path)
 
 
+def _validate_permissions(manifest, granted_permissions):
+    granted = set(granted_permissions or [])
+    required = manifest.get("permissions") or []
+    missing = [permission for permission in required if permission not in granted]
+    if missing:
+        raise RuntimeError("App permission denied: {}".format(", ".join(missing)))
+
+
 def _write_runtime_files(runtime_dir, files):
     for item in files:
         relative_path = item.get("path")
@@ -102,7 +108,6 @@ def _load_entrypoint(runtime_dir, manifest):
     function_name = manifest.get("entry_function", "show")
     if not module_name:
         raise RuntimeError("Manifest is missing entry_module")
-
     _ensure_path(runtime_dir)
     module = __import__(module_name, fromlist=[function_name])
     function = getattr(module, function_name, None)
@@ -122,11 +127,12 @@ def run():
     session = _exchange_bootstrap_token()
     session_token = session.get("session_token")
     manifest = session.get("manifest") or {}
+    granted_permissions = session.get("granted_permissions") or []
     runtime_files = session.get("runtime_files") or []
-
     if not session_token:
         raise RuntimeError("Server did not return a runtime session token")
 
+    _validate_permissions(manifest, granted_permissions)
     app_id = manifest.get("app_id") or APP_ID
     version = manifest.get("version") or "current"
     runtime_dir = os.path.join(_runtime_root(), app_id, version)
